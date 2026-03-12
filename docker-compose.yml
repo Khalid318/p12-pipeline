@@ -1,0 +1,65 @@
+services:
+
+  postgres:
+    image: postgres:15
+    container_name: p12_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: p12_user
+      POSTGRES_PASSWORD: p12_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/01_init.sql
+    networks:
+      - p12_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U p12_user -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  airflow:
+    image: apache/airflow:2.8.1
+    container_name: p12_airflow
+    restart: unless-stopped
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://p12_user:p12_password@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: p12_secret
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./scripts:/opt/airflow/scripts
+      - ./data:/opt/airflow/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: bash -c "airflow db init && airflow users create --username admin --password admin --firstname Admin --lastname Admin --role Admin --email admin@p12.com && airflow webserver --port 8080 & airflow scheduler"
+    networks:
+      - p12_network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: p12_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@p12.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - p12_network
+
+volumes:
+  postgres_data:
+
+networks:
+  p12_network:
+    driver: bridge
