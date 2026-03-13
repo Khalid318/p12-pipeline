@@ -1,49 +1,57 @@
-import pandas as pd
-import psycopg2
-import numpy as np
+"""
+P12 - Sport Data Solution
+Chargement des fichiers Excel RH et Sports dans PostgreSQL.
+execute_values (bulk insert), itertuples (pas iterrows), try/except/finally.
+"""
+
 import os
+import pandas as pd
+import numpy as np
+import psycopg2
+from psycopg2 import extras
 from dotenv import load_dotenv
-
-
-# Connexion à la base de données PostgreSQL
 
 load_dotenv()
 
-conn = psycopg2.connect(
-    host=os.getenv("DB_HOST"),
-    port=os.getenv("DB_PORT"),
-    database=os.getenv("DB_NAME"),
-    user=os.getenv("DB_USER"),
-    password=os.getenv("DB_PASSWORD")
-)
-cur = conn.cursor()
+conn = None
+cur = None
 
-print("Connexion réussie !")
+try:
+    # --- CONNEXION ---
+    conn = psycopg2.connect(
+        host=os.getenv("DB_HOST"),
+        port=os.getenv("DB_PORT"),
+        database=os.getenv("DB_NAME"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD")
+    )
+    cur = conn.cursor()
+    print("Connexion OK")
 
-# Chargement du fichier RH
-df_rh = pd.read_excel("data/donnees_RH.xlsx")
-print(df_rh.columns)
+    # --- Chemins des fichiers (configurables via .env) ---
+    rh_path = os.getenv("RH_FILE", "data/donnees_RH.xlsx")
+    sports_path = os.getenv("SPORTS_FILE", "data/donnees_sports.xlsx")
 
-row = df_rh.iloc[0]
-print(row)
+    # --- PIPELINE 1 : SALARIES ---
+    df_rh = pd.read_excel(rh_path)
+    df_rh = df_rh.replace({np.nan: None})
 
-# Insertion des données RH dans la table salaries
-for index, row in df_rh.iterrows():
-    cur.execute("""
+    # itertuples : 100x plus rapide que iterrows (pas de création d'objet Series)
+    records_rh = [
+        (r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10])
+        for r in df_rh[[
+            "ID salarié", "Nom", "Prénom", "Date de naissance", "BU",
+            "Date d'embauche", "Salaire brut", "Type de contrat",
+            "Nombre de jours de CP", "Adresse du domicile", "Moyen de déplacement"
+        ]].itertuples(index=False, name=None)
+    ]
+
+    query_rh = """
         INSERT INTO salaries (
-            id_salarie,
-            nom,
-            prenom,
-            date_naissance,
-            bu,
-            date_embauche,
-            salaire_brut,
-            type_contrat,
-            nb_jours_cp,
-            adresse_domicile,
-            moyen_deplacement
+            id_salarie, nom, prenom, date_naissance, bu, date_embauche,
+            salaire_brut, type_contrat, nb_jours_cp, adresse_domicile, moyen_deplacement
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES %s
         ON CONFLICT (id_salarie) DO UPDATE SET
             nom = EXCLUDED.nom,
             prenom = EXCLUDED.prenom,
@@ -54,50 +62,45 @@ for index, row in df_rh.iterrows():
             type_contrat = EXCLUDED.type_contrat,
             nb_jours_cp = EXCLUDED.nb_jours_cp,
             adresse_domicile = EXCLUDED.adresse_domicile,
-            moyen_deplacement = EXCLUDED.moyen_deplacement     
-    """, (
-        row["ID salarié"],
-        row["Nom"],
-        row["Prénom"],
-        row["Date de naissance"],
-        row["BU"],
-        row["Date d'embauche"],
-        row["Salaire brut"],
-        row["Type de contrat"],
-        row["Nombre de jours de CP"],
-        row["Adresse du domicile"],
-        row["Moyen de déplacement"]
-    ))
+            moyen_deplacement = EXCLUDED.moyen_deplacement
+    """
 
-conn.commit()
+    extras.execute_values(cur, query_rh, records_rh)
+    conn.commit()
+    print(f"{len(records_rh)} salaries charges")
 
+    # --- PIPELINE 2 : SPORTS DECLARES ---
+    df_sports = pd.read_excel(sports_path)
+    df_sports = df_sports[df_sports["ID salarié"].notna()]
+    df_sports = df_sports.replace({np.nan: None})
 
-# Chargement et insertion des données sports
-df_sports = pd.read_excel("data/donnees_sports.xlsx")
-print(df_sports.columns)
-row = df_sports.iloc[0]
-print(row)
-print(df_sports.isna().sum())
-df_sports = df_sports.replace({np.nan: None})
-df_sports = df_sports[df_sports["ID salarié"].notna()]
+    records_sports = [
+        (r[0], r[1])
+        for r in df_sports[[
+            "ID salarié", "Pratique d'un sport"
+        ]].itertuples(index=False, name=None)
+    ]
 
-cur.execute("TRUNCATE TABLE sports_declares RESTART IDENTITY;")
-# Insertion des sports déclarés dans la table sports_declares
-for index, row in df_sports.iterrows():
-    cur.execute("""
-        INSERT INTO sports_declares (
-            id_salarie,
-            sport
-        )
-        VALUES (%s, %s)
-    """, (
-        row["ID salarié"],
-        row["Pratique d'un sport"]
-    ))
+    # ON CONFLICT cohérent avec pipeline 1 (pas de TRUNCATE)
+    query_sports = """
+        INSERT INTO sports_declares (id_salarie, sport)
+        VALUES %s
+        ON CONFLICT (id_salarie) DO UPDATE SET
+            sport = EXCLUDED.sport
+    """
 
-conn.commit()
+    extras.execute_values(cur, query_sports, records_sports)
+    conn.commit()
+    print(f"{len(records_sports)} sports declares charges")
 
+except Exception as e:
+    print(f"ERREUR : {e}")
+    if conn:
+        conn.rollback()
 
-# Fermeture de la connexion
-cur.close()
-conn.close()
+finally:
+    if cur:
+        cur.close()
+    if conn:
+        conn.close()
+    print("Connexion fermee")
