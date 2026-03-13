@@ -1,13 +1,7 @@
 """
 P12 - Sport Data Solution
 Génération de données sportives simulées (type Strava).
-~4000 activités sur 12 mois, cohérentes avec les profils RH.
-
-Logique :
-- Salarié sportif déclaré → 2-5 activités/semaine
-- Salarié transport sportif sans sport déclaré → 0-2 activités/semaine
-- Salarié sédentaire → 0-1 activité/mois
-- Saisonnalité : plus d'activités au printemps/été
+~4000 activités sur 12 mois dans raw.activites_sportives.
 """
 
 import os
@@ -19,15 +13,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Seed pour reproductibilité (même données à chaque run)
 random.seed(42)
 
-# Période de génération : 12 derniers mois
 DATE_FIN = datetime(2026, 3, 1)
 DATE_DEBUT = datetime(2025, 3, 1)
 
-# --- PROFILS SPORTIFS ---
-# Pour chaque sport : distances réalistes, vitesses, horaires typiques
 PROFILS = {
     "Course à pied": {
         "distance": (3000, 20000),
@@ -38,7 +28,7 @@ PROFILS = {
         "distance": (5000, 25000),
         "vitesse_kmh": (3, 5),
         "heures": [8, 9, 10],
-        "jours": [5, 6],  # weekend
+        "jours": [5, 6],
     },
     "Vélo": {
         "distance": (10000, 60000),
@@ -94,7 +84,6 @@ PROFILS = {
     },
 }
 
-# Mapping sport déclaré → types d'activités Strava générées
 SPORT_MAPPING = {
     "Runing":          ["Course à pied"],
     "Randonnée":       ["Randonnée", "Marche"],
@@ -113,7 +102,6 @@ SPORT_MAPPING = {
     "Basketball":      ["Course à pied"],
 }
 
-# Commentaires réalistes (majorité None = pas de commentaire)
 COMMENTAIRES = {
     "Course à pied": [
         None, None, None, None, None,
@@ -144,7 +132,6 @@ COMMENTAIRES = {
     ],
 }
 
-# Saisonnalité : coefficient par mois (plus d'activités au printemps/été)
 SAISONNALITE = {
     1: 0.6, 2: 0.7, 3: 0.85, 4: 1.0, 5: 1.15, 6: 1.2,
     7: 1.1, 8: 0.9, 9: 1.05, 10: 0.95, 11: 0.75, 12: 0.6,
@@ -152,15 +139,11 @@ SAISONNALITE = {
 
 
 def generer_activite(id_salarie, sport, date_jour):
-    """Génère une activité réaliste pour un salarié et un sport donné."""
     profil = PROFILS.get(sport, PROFILS["Marche"])
-
-    # Heure de début réaliste
     heure = random.choice(profil["heures"])
     minute = random.randint(0, 59)
     date_debut = date_jour.replace(hour=heure, minute=minute, second=0)
 
-    # Distance et durée
     if profil.get("distance"):
         distance_m = random.randint(*profil["distance"])
         vitesse = random.uniform(*profil["vitesse_kmh"])
@@ -170,8 +153,6 @@ def generer_activite(id_salarie, sport, date_jour):
         duree_s = random.randint(*profil["duree_min"]) * 60
 
     date_fin = date_debut + timedelta(seconds=duree_s)
-
-    # Commentaire
     pool = COMMENTAIRES.get(sport, COMMENTAIRES["default"])
     commentaire = random.choice(pool)
 
@@ -179,13 +160,9 @@ def generer_activite(id_salarie, sport, date_jour):
 
 
 def determine_profil(sport_declare, moyen_deplacement):
-    """
-    Retourne (liste_sports, freq_min_hebdo, freq_max_hebdo) selon le profil du salarié.
-    """
     modes_sportifs = ["Marche/running", "Vélo/Trottinette/Autres"]
 
     if sport_declare:
-        # Sportif déclaré : 2-5 activités/semaine
         sports = list(SPORT_MAPPING.get(sport_declare, ["Course à pied", "Marche"]))
         if random.random() < 0.3:
             extra = random.choice(["Marche", "Yoga", "Vélo"])
@@ -194,33 +171,27 @@ def determine_profil(sport_declare, moyen_deplacement):
         return sports, 0.5, 1.5
 
     elif moyen_deplacement in modes_sportifs:
-        # Transport sportif sans sport déclaré : occasionnel
         if moyen_deplacement == "Marche/running":
             return ["Marche", "Course à pied"], 0, 0.5
         return ["Vélo", "Marche"], 0, 0.5
 
     else:
-        # Sédentaire : très rare
-        return ["Marche"], 0, 0.2
+        return ["Marche"], 0, 0.1
 
 
 def generer_tout(cur):
-    """Génère toutes les activités pour tous les salariés."""
-    # Récupérer les profils depuis la base
     cur.execute("""
         SELECT s.id_salarie, s.moyen_deplacement, sd.sport
-        FROM salaries s
-        LEFT JOIN sports_declares sd ON s.id_salarie = sd.id_salarie
+        FROM raw.salaries s
+        LEFT JOIN raw.sports_declares sd ON s.id_salarie = sd.id_salarie
     """)
     salaries = cur.fetchall()
-
     activites = []
 
     for id_sal, moyen_dep, sport_decl in salaries:
         sports, freq_min, freq_max = determine_profil(sport_decl, moyen_dep)
-
-        # Parcourir semaine par semaine sur 12 mois
         semaine = DATE_DEBUT
+
         while semaine < DATE_FIN:
             coeff = SAISONNALITE.get(semaine.month, 1.0)
             nb = max(0, round(random.uniform(freq_min, freq_max) * coeff))
@@ -229,7 +200,6 @@ def generer_tout(cur):
                 sport = random.choice(sports)
                 profil = PROFILS.get(sport, PROFILS["Marche"])
 
-                # Jour dans la semaine (respecter jours préférés si définis)
                 if "jours" in profil and random.random() < 0.7:
                     jour = random.choice(profil["jours"])
                 else:
@@ -238,17 +208,14 @@ def generer_tout(cur):
                 date_act = semaine + timedelta(days=jour)
                 if date_act >= DATE_FIN:
                     continue
-
                 activites.append(generer_activite(id_sal, sport, date_act))
 
             semaine += timedelta(weeks=1)
 
-    # Trier par date
     activites.sort(key=lambda x: x[1])
     return activites
 
 
-# --- MAIN ---
 conn = None
 cur = None
 
@@ -263,32 +230,27 @@ try:
     cur = conn.cursor()
     print("Connexion OK")
 
-    # Générer les activités
     print("Generation des activites...")
     activites = generer_tout(cur)
     print(f"{len(activites)} activites generees")
 
-    # Full refresh : TRUNCATE + INSERT (données entièrement regénérées à chaque run)
-    cur.execute("TRUNCATE TABLE activites_sportives RESTART IDENTITY;")
+    cur.execute("TRUNCATE TABLE raw.activites_sportives RESTART IDENTITY;")
 
     query = """
-        INSERT INTO activites_sportives
+        INSERT INTO raw.activites_sportives
             (id_salarie, date_debut, type_sport, distance_m, date_fin, commentaire)
         VALUES %s
     """
 
-    # Insertion par batch de 1000 (évite de saturer la mémoire sur gros volumes)
     extras.execute_values(cur, query, activites, page_size=1000)
-
     conn.commit()
-    print(f"{len(activites)} activites inserees")
+    print(f"{len(activites)} activites inserees dans raw.activites_sportives")
 
-    # Stats rapides
-    cur.execute("SELECT COUNT(DISTINCT id_salarie) FROM activites_sportives")
+    cur.execute("SELECT COUNT(DISTINCT id_salarie) FROM raw.activites_sportives")
     print(f"Salaries actifs : {cur.fetchone()[0]}")
 
     cur.execute("""
-        SELECT type_sport, COUNT(*) FROM activites_sportives
+        SELECT type_sport, COUNT(*) FROM raw.activites_sportives
         GROUP BY type_sport ORDER BY COUNT(*) DESC LIMIT 5
     """)
     print("Top 5 sports :")
@@ -297,7 +259,7 @@ try:
 
     cur.execute("""
         SELECT COUNT(*) FROM (
-            SELECT id_salarie FROM activites_sportives
+            SELECT id_salarie FROM raw.activites_sportives
             GROUP BY id_salarie HAVING COUNT(*) >= 15
         ) sub
     """)
