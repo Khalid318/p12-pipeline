@@ -54,3 +54,19 @@ ON CONFLICT (cle) DO NOTHING;
 -- 161 lignes : le coût en écriture est nul, le gain en lecture est réel
 CREATE INDEX IF NOT EXISTS idx_salaries_bu ON salaries(bu);
 CREATE INDEX IF NOT EXISTS idx_salaries_transport ON salaries(moyen_deplacement);
+
+-- Activités sportives simulées (type Strava, ~4000 lignes sur 12 mois)
+-- Colonnes conformes à la note de cadrage
+CREATE TABLE IF NOT EXISTS activites_sportives (
+    id              SERIAL PRIMARY KEY,
+    id_salarie      INTEGER NOT NULL REFERENCES salaries(id_salarie),
+    date_debut      TIMESTAMP NOT NULL,
+    type_sport      VARCHAR(50) NOT NULL,
+    distance_m      INTEGER,
+    date_fin        TIMESTAMP NOT NULL,
+    commentaire     TEXT,
+    created_at      TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_activites_salarie ON activites_sportives(id_salarie);
+CREATE INDEX IF NOT EXISTS idx_activites_date ON activites_sportives(date_debut);
