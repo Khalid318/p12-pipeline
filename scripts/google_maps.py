@@ -17,6 +17,7 @@ import psycopg2
 from psycopg2 import extras
 import requests
 from dotenv import load_dotenv
+import sys
 
 load_dotenv()
 
@@ -209,6 +210,7 @@ except Exception as e:
     print(f"ERREUR : {e}")
     if conn:
         conn.rollback()
+    sys.exit(1)
 
 finally:
     if cur:
