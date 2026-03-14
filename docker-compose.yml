@@ -26,10 +26,22 @@ services:
     container_name: p12_airflow
     restart: unless-stopped
     environment:
+      # Airflow config
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://p12_user:p12_password@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: p12_secret
+      # Installe les dependances Python au demarrage
+      _PIP_ADDITIONAL_REQUIREMENTS: "pandas psycopg2-binary openpyxl python-dotenv requests"
+      # Variables pour les scripts (dans Docker, DB_HOST = nom du service, pas localhost)
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: sport_data
+      DB_USER: p12_user
+      DB_PASSWORD: p12_password
+      RH_FILE: /opt/airflow/data/donnees_RH.xlsx
+      SPORTS_FILE: /opt/airflow/data/donnees_sports.xlsx
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
     ports:
       - "8080:8080"
     volumes:
@@ -39,7 +51,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: bash -c "airflow db init && airflow users create --username admin --password admin --firstname Admin --lastname Admin --role Admin --email admin@p12.com && airflow webserver --port 8080 & airflow scheduler"
+    command: bash -c "(airflow db init || true) && (airflow users create --username admin --password admin --firstname Admin --lastname Admin --role Admin --email admin@p12.com || true) && airflow webserver --port 8080 & airflow scheduler"
     networks:
       - p12_network
 
