@@ -145,6 +145,7 @@ try:
         SELECT id_salarie, adresse_domicile, moyen_deplacement
         FROM raw.salaries
         WHERE moyen_deplacement IN ('Marche/running', 'Vélo/Trottinette/Autres')
+        ORDER BY id_salarie        
     """)
     salaries = cur.fetchall()
     print(f"{len(salaries)} salaries avec transport sportif a valider")

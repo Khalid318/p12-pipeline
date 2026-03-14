@@ -185,6 +185,7 @@ def generer_tout(cur):
         SELECT s.id_salarie, s.moyen_deplacement, sd.sport
         FROM raw.salaries s
         LEFT JOIN raw.sports_declares sd ON s.id_salarie = sd.id_salarie
+        ORDER BY s.id_salarie
     """)
     salaries = cur.fetchall()
     activites = []

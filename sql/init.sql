@@ -7,14 +7,11 @@ CREATE DATABASE sport_data;
 \c sport_data;
 
 -- ============================================================
--- SCHEMA RAW : données brutes ingérées (tables physiques)
--- Règle : PK obligatoire (pour upsert), NOT NULL uniquement
--- sur les champs utilisés dans les calculs métier
+-- SCHEMA RAW : données brutes ingérées
 -- ============================================================
 
 CREATE SCHEMA IF NOT EXISTS raw;
 
--- Salariés (source : Données_RH.xlsx)
 CREATE TABLE IF NOT EXISTS raw.salaries (
     id_salarie        INTEGER PRIMARY KEY,
     nom               VARCHAR(100) NOT NULL,
@@ -30,14 +27,12 @@ CREATE TABLE IF NOT EXISTS raw.salaries (
     created_at        TIMESTAMP DEFAULT NOW()
 );
 
--- Sports déclarés (source : Données_Sportive.xlsx)
 CREATE TABLE IF NOT EXISTS raw.sports_declares (
     id_salarie  INTEGER PRIMARY KEY,
     sport       VARCHAR(100),
     created_at  TIMESTAMP DEFAULT NOW()
 );
 
--- Activités sportives simulées (type Strava)
 CREATE TABLE IF NOT EXISTS raw.activites_sportives (
     id          SERIAL PRIMARY KEY,
     id_salarie  INTEGER NOT NULL,
@@ -46,10 +41,10 @@ CREATE TABLE IF NOT EXISTS raw.activites_sportives (
     distance_m  INTEGER,
     date_fin    TIMESTAMP NOT NULL,
     commentaire TEXT,
+    slack_sent  BOOLEAN DEFAULT FALSE,
     created_at  TIMESTAMP DEFAULT NOW()
 );
 
--- Validations transport (résultats API Google Maps)
 CREATE TABLE IF NOT EXISTS raw.validations_transport (
     id_salarie      INTEGER PRIMARY KEY,
     distance_km     NUMERIC(8, 2),
@@ -57,7 +52,6 @@ CREATE TABLE IF NOT EXISTS raw.validations_transport (
     date_calcul     TIMESTAMP DEFAULT NOW()
 );
 
--- Paramètres métier (modifiables sans toucher au code)
 CREATE TABLE IF NOT EXISTS raw.parametres (
     cle         VARCHAR(50) PRIMARY KEY,
     valeur      VARCHAR(100) NOT NULL,
@@ -73,22 +67,16 @@ INSERT INTO raw.parametres (cle, valeur, description) VALUES
     ('adresse_entreprise',     '1362 Av. des Platanes, 34970 Lattes', 'Adresse de reference')
 ON CONFLICT (cle) DO NOTHING;
 
--- Index sur les colonnes de jointure et filtres fréquents
 CREATE INDEX IF NOT EXISTS idx_activites_salarie ON raw.activites_sportives(id_salarie);
 CREATE INDEX IF NOT EXISTS idx_activites_date ON raw.activites_sportives(date_debut);
 
 -- ============================================================
 -- SCHEMA ANALYTICS : calculs métier (vues, jamais de tables)
--- Règle : toute logique métier ici, recalculée à chaque lecture
--- Avantage : si un paramètre change, Power BI voit le résultat
--- immédiatement sans relancer de script
 -- ============================================================
 
 CREATE SCHEMA IF NOT EXISTS analytics;
 
 -- Vue 1 : Éligibilité à la prime sportive
--- Un salarié est éligible si son mode de transport est sportif
--- ET sa distance domicile-entreprise est dans les seuils
 CREATE OR REPLACE VIEW analytics.prime_sportive AS
 SELECT
     s.id_salarie,
@@ -98,26 +86,23 @@ SELECT
     s.salaire_brut,
     s.moyen_deplacement,
     vt.distance_km,
-    -- Éligibilité
     CASE
         WHEN s.moyen_deplacement IN ('Marche/running', 'Vélo/Trottinette/Autres')
-             AND (vt.distance_km IS NULL OR  -- pas encore validé = éligible par défaut
+             AND (vt.distance_km IS NULL OR
                   (s.moyen_deplacement = 'Marche/running'
                    AND vt.distance_km <= (SELECT valeur::NUMERIC FROM raw.parametres WHERE cle = 'distance_max_marche_km'))
                   OR
                   (s.moyen_deplacement = 'Vélo/Trottinette/Autres'
                    AND vt.distance_km <= (SELECT valeur::NUMERIC FROM raw.parametres WHERE cle = 'distance_max_velo_km'))
              )
-        THEN TRUE
-        ELSE FALSE
-    END AS eligible,
-    -- Montant de la prime
+        THEN 'Éligible'
+        ELSE 'Non éligible'
+    END AS statut_prime,
     CASE
         WHEN s.moyen_deplacement IN ('Marche/running', 'Vélo/Trottinette/Autres')
         THEN s.salaire_brut * (SELECT valeur::NUMERIC FROM raw.parametres WHERE cle = 'prime_taux')
         ELSE 0
     END AS montant_prime,
-    -- Motif si non éligible
     CASE
         WHEN s.moyen_deplacement NOT IN ('Marche/running', 'Vélo/Trottinette/Autres')
         THEN 'Mode de transport non sportif'
@@ -134,9 +119,7 @@ SELECT
 FROM raw.salaries s
 LEFT JOIN raw.validations_transport vt ON s.id_salarie = vt.id_salarie;
 
-
 -- Vue 2 : Éligibilité aux jours bien-être
--- Un salarié est éligible s'il a >= 15 activités dans l'année
 CREATE OR REPLACE VIEW analytics.jours_bien_etre AS
 SELECT
     s.id_salarie,
@@ -147,9 +130,9 @@ SELECT
     (SELECT valeur::INTEGER FROM raw.parametres WHERE cle = 'seuil_activites') AS seuil_requis,
     CASE
         WHEN COALESCE(a.nb_activites, 0) >= (SELECT valeur::INTEGER FROM raw.parametres WHERE cle = 'seuil_activites')
-        THEN TRUE
-        ELSE FALSE
-    END AS eligible,
+        THEN 'Éligible'
+        ELSE 'Non éligible'
+    END AS statut_jours,
     CASE
         WHEN COALESCE(a.nb_activites, 0) >= (SELECT valeur::INTEGER FROM raw.parametres WHERE cle = 'seuil_activites')
         THEN (SELECT valeur::INTEGER FROM raw.parametres WHERE cle = 'nb_jours_bien_etre')
@@ -162,9 +145,7 @@ LEFT JOIN (
     GROUP BY id_salarie
 ) a ON s.id_salarie = a.id_salarie;
 
-
 -- Vue 3 : Anomalies de déclaration transport
--- Signale les salariés dont la distance dépasse les seuils
 CREATE OR REPLACE VIEW analytics.anomalies_transport AS
 SELECT
     s.id_salarie,
@@ -191,9 +172,7 @@ WHERE
     (s.moyen_deplacement = 'Vélo/Trottinette/Autres'
      AND vt.distance_km > (SELECT valeur::NUMERIC FROM raw.parametres WHERE cle = 'distance_max_velo_km'));
 
-
 -- Vue 4 : Contrôle qualité des données brutes
--- Signale les problèmes dans les données ingérées
 CREATE OR REPLACE VIEW analytics.controle_qualite AS
 SELECT 'salaire_manquant' AS type_anomalie, id_salarie, nom, prenom
 FROM raw.salaries WHERE salaire_brut IS NULL
@@ -209,14 +188,27 @@ FROM raw.activites_sportives a
 LEFT JOIN raw.salaries s ON a.id_salarie = s.id_salarie
 WHERE s.id_salarie IS NULL;
 
-
 -- Vue 5 : KPI globaux pour Power BI
 CREATE OR REPLACE VIEW analytics.kpi_global AS
 SELECT
     (SELECT COUNT(*) FROM raw.salaries) AS total_salaries,
-    (SELECT COUNT(*) FROM analytics.prime_sportive WHERE eligible = TRUE) AS eligibles_prime,
-    (SELECT COALESCE(SUM(montant_prime), 0) FROM analytics.prime_sportive WHERE eligible = TRUE) AS cout_total_primes,
-    (SELECT COUNT(*) FROM analytics.jours_bien_etre WHERE eligible = TRUE) AS eligibles_jours,
+    (SELECT COUNT(*) FROM analytics.prime_sportive WHERE statut_prime = 'Éligible') AS eligibles_prime,
+    (SELECT COALESCE(SUM(montant_prime), 0) FROM analytics.prime_sportive WHERE statut_prime = 'Éligible') AS cout_total_primes,
+    (SELECT COUNT(*) FROM analytics.jours_bien_etre WHERE statut_jours = 'Éligible') AS eligibles_jours,
     (SELECT COALESCE(SUM(nb_jours_accordes), 0) FROM analytics.jours_bien_etre) AS total_jours_accordes,
     (SELECT COUNT(*) FROM raw.activites_sportives) AS total_activites,
     (SELECT COUNT(DISTINCT id_salarie) FROM raw.activites_sportives) AS salaries_actifs;
+
+-- Vue 6 : Activités par mois (pour courbe mensuelle Power BI)
+CREATE OR REPLACE VIEW analytics.activites_par_mois AS
+SELECT
+    TO_CHAR(date_debut, 'YYYY-MM') AS mois,
+    EXTRACT(YEAR FROM date_debut) AS annee,
+    EXTRACT(MONTH FROM date_debut) AS num_mois,
+    type_sport,
+    COUNT(*) AS nb_activites,
+    COUNT(DISTINCT id_salarie) AS nb_salaries_actifs,
+    ROUND(AVG(distance_m), 0) AS distance_moyenne_m
+FROM raw.activites_sportives
+GROUP BY TO_CHAR(date_debut, 'YYYY-MM'), EXTRACT(YEAR FROM date_debut), EXTRACT(MONTH FROM date_debut), type_sport
+ORDER BY mois;
