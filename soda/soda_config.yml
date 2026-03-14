@@ -1,0 +1,11 @@
+# P12 - Configuration SODA Core
+# Connexion à PostgreSQL (les variables viennent de l'environnement)
+
+data_source sport_data:
+  type: postgres
+  host: ${DB_HOST}
+  port: ${DB_PORT}
+  username: ${DB_USER}
+  password: ${DB_PASSWORD}
+  database: ${DB_NAME}
+  schema: raw

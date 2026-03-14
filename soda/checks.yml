@@ -1,0 +1,37 @@
+checks for salaries:
+  - row_count > 0:
+      name: "salaries non vide"
+  - row_count between 150 and 200:
+      name: "nombre de salaries coherent"
+  - duplicate_count(id_salarie) = 0:
+      name: "pas de doublons id_salarie"
+  - missing_count(id_salarie) = 0:
+      name: "id_salarie jamais null"
+  - missing_count(nom) = 0:
+      name: "nom jamais null"
+  - missing_count(salaire_brut) = 0:
+      name: "salaire_brut jamais null"
+  - min(salaire_brut) >= 20000:
+      name: "salaire minimum realiste"
+  - max(salaire_brut) <= 100000:
+      name: "salaire maximum realiste"
+
+checks for sports_declares:
+  - row_count > 0:
+      name: "sports_declares non vide"
+  - duplicate_count(id_salarie) = 0:
+      name: "pas de doublons sports"
+
+checks for activites_sportives:
+  - row_count > 1000:
+      name: "au moins 1000 activites"
+  - min(distance_m) >= 0:
+      name: "distances jamais negatives"
+  - max(distance_m) <= 100000:
+      name: "distance maximale realiste"
+
+checks for validations_transport:
+  - row_count > 0:
+      name: "validations non vide"
+  - min(distance_km) >= 0:
+      name: "distances km jamais negatives"

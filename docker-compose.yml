@@ -32,7 +32,7 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: p12_secret
       # Installe les dependances Python au demarrage
-      _PIP_ADDITIONAL_REQUIREMENTS: "pandas psycopg2-binary openpyxl python-dotenv requests"
+      _PIP_ADDITIONAL_REQUIREMENTS: "pandas psycopg2-binary openpyxl python-dotenv requests soda-core-postgres"
       # Variables pour les scripts (dans Docker, DB_HOST = nom du service, pas localhost)
       DB_HOST: postgres
       DB_PORT: "5432"
@@ -48,6 +48,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./scripts:/opt/airflow/scripts
       - ./data:/opt/airflow/data
+      - ./soda:/opt/airflow/soda
     depends_on:
       postgres:
         condition: service_healthy

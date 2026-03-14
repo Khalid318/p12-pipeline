@@ -1,7 +1,6 @@
 """
 P12 - Sport Data Solution
-DAG Airflow : orchestre le pipeline ETL complet.
-Airflow ne calcule rien — il lance les scripts dans le bon ordre.
+DAG Airflow : pipeline ETL complet.
 """
 
 from datetime import datetime, timedelta
@@ -10,24 +9,43 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 import psycopg2
 import os
+import json
+import requests
 
 
-# --- Configuration du DAG ---
+def on_failure_slack(context):
+    """Alerte Slack quand une tâche échoue."""
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
+    task_id = context.get("task_instance").task_id
+    dag_id = context.get("task_instance").dag_id
+    error = str(context.get("exception", "Erreur inconnue"))
+
+    message = f"🚨 *PIPELINE EN ÉCHEC*\nDAG: {dag_id}\nTâche: {task_id}\nErreur: {error}"
+
+    if not webhook_url:
+        print(f"[ALERTE MOCK] {message}")
+        return
+
+    requests.post(
+        webhook_url,
+        data=json.dumps({"text": message}),
+        headers={"Content-Type": "application/json"},
+        timeout=10,
+    )
+
+
 default_args = {
     "owner": "p12",
     "depends_on_past": False,
     "email_on_failure": False,
     "retries": 1,
     "retry_delay": timedelta(minutes=2),
+    "on_failure_callback": on_failure_slack,
 }
 
 
 def verify_data(**kwargs):
-    """
-    Tâche de vérification : compte les lignes dans chaque table raw
-    et vérifie que les vues analytics retournent des résultats.
-    Si un check échoue, la tâche lève une exception → le DAG s'arrête.
-    """
+    """Vérification finale."""
     conn = psycopg2.connect(
         host=os.getenv("DB_HOST"),
         port=os.getenv("DB_PORT"),
@@ -38,9 +56,9 @@ def verify_data(**kwargs):
     cur = conn.cursor()
 
     checks = {
-        "raw.salaries": 100,              # minimum 100 salariés attendus
-        "raw.sports_declares": 100,        # minimum 100 déclarations
-        "raw.activites_sportives": 1000,   # minimum 1000 activités
+        "raw.salaries": 100,
+        "raw.sports_declares": 100,
+        "raw.activites_sportives": 1000,
     }
 
     for table, min_rows in checks.items():
@@ -48,9 +66,8 @@ def verify_data(**kwargs):
         count = cur.fetchone()[0]
         print(f"  {table}: {count} lignes")
         if count < min_rows:
-            raise ValueError(f"ECHEC: {table} a {count} lignes (minimum attendu: {min_rows})")
+            raise ValueError(f"ECHEC: {table} a {count} lignes (minimum: {min_rows})")
 
-    # Vérifier que les vues analytics fonctionnent
     views = [
         "analytics.prime_sportive",
         "analytics.jours_bien_etre",
@@ -64,7 +81,6 @@ def verify_data(**kwargs):
         if count == 0:
             raise ValueError(f"ECHEC: la vue {view} est vide")
 
-    # Afficher les KPI
     cur.execute("SELECT * FROM analytics.kpi_global")
     cols = [desc[0] for desc in cur.description]
     row = cur.fetchone()
@@ -74,46 +90,47 @@ def verify_data(**kwargs):
 
     cur.close()
     conn.close()
-    print("\n  Toutes les vérifications OK")
+    print("\n  Toutes les verifications OK")
 
 
-# --- Définition du DAG ---
 with DAG(
     dag_id="p12_sport_data_pipeline",
     default_args=default_args,
-    description="Pipeline ETL complet : ingestion Excel + génération Strava + validation distances",
-    schedule_interval=None,  # Déclenchement manuel uniquement (POC)
+    description="Pipeline ETL complet",
+    schedule_interval=None,
     start_date=datetime(2025, 1, 1),
     catchup=False,
     tags=["p12", "sport"],
 ) as dag:
 
-    # Tâche 1 : Charger les fichiers Excel dans raw
     load_excel = BashOperator(
         task_id="load_excel",
         bash_command="python /opt/airflow/scripts/load_data.py",
     )
 
-    # Tâche 2 : Générer les activités sportives simulées
     generate_strava = BashOperator(
         task_id="generate_strava",
         bash_command="python /opt/airflow/scripts/generate_strava.py",
     )
 
-    # Tâche 3 : Calculer les distances domicile → Lattes (Google Maps)
     validate_distances = BashOperator(
         task_id="validate_distances",
         bash_command="python /opt/airflow/scripts/google_maps.py",
     )
 
-    # Tâche 4 : Vérifier l'intégrité des données
+    soda_checks = BashOperator(
+        task_id="soda_checks",
+        bash_command="python /opt/airflow/scripts/run_soda_checks.py",
+    )
+
+    slack_notify = BashOperator(
+        task_id="slack_notify",
+        bash_command="python /opt/airflow/scripts/slack_notify.py",
+    )
+
     verify = PythonOperator(
         task_id="verify_data",
         python_callable=verify_data,
     )
 
-    # --- Ordre d'exécution ---
-    # load_excel PUIS generate_strava (les activités ont besoin des salariés en base)
-    # PUIS validate_distances (besoin des adresses en base)
-    # PUIS verify (vérifie que tout est OK)
-    load_excel >> generate_strava >> validate_distances >> verify
+    load_excel >> generate_strava >> validate_distances >> soda_checks >> slack_notify >> verify
