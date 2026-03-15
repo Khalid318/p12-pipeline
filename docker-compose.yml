@@ -1,13 +1,41 @@
-services:
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.8.1
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DB_USER:-p12_user}:${DB_PASSWORD:-p12_password}@postgres:5432/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-p12_secret}
+    _PIP_ADDITIONAL_REQUIREMENTS: "pandas psycopg2-binary openpyxl python-dotenv requests soda-core-postgres"
+    # Variables passed via .env file instead of hardcoded
+    DB_HOST: postgres
+    DB_PORT: "5432"
+    DB_NAME: sport_data
+    DB_USER: ${DB_USER:-p12_user}
+    DB_PASSWORD: ${DB_PASSWORD:-p12_password}
+    RH_FILE: /opt/airflow/data/donnees_RH.xlsx
+    SPORTS_FILE: /opt/airflow/data/donnees_sports.xlsx
+    GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+    SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./scripts:/opt/airflow/scripts
+    - ./data:/opt/airflow/data
+    - ./soda:/opt/airflow/soda
+  networks:
+    - p12_network
+  depends_on:
+    postgres:
+      condition: service_healthy
 
+services:
   postgres:
     image: postgres:15
     container_name: p12_postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: airflow
-      POSTGRES_USER: p12_user
-      POSTGRES_PASSWORD: p12_password
+      POSTGRES_USER: ${DB_USER:-p12_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-p12_password}
     ports:
       - "5432:5432"
     volumes:
@@ -16,46 +44,46 @@ services:
     networks:
       - p12_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U p12_user -d airflow"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-p12_user} -d airflow"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  airflow:
-    image: apache/airflow:2.8.1
-    container_name: p12_airflow
+  # 1. Ephemeral Init Service (Runs once, then exits)
+  airflow-init:
+    <<: *airflow-common
+    container_name: p12_airflow_init
+    command: >
+      bash -c "
+      airflow db migrate &&
+      airflow users create --username admin --password ${ADMIN_PASSWORD:-admin} --firstname Admin --lastname Admin --role Admin --email admin@p12.com
+      "
+
+  # 2. Webserver Service
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: p12_airflow_webserver
     restart: unless-stopped
-    environment:
-      # Airflow config
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://p12_user:p12_password@postgres:5432/airflow
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__WEBSERVER__SECRET_KEY: p12_secret
-      # Installe les dependances Python au demarrage
-      _PIP_ADDITIONAL_REQUIREMENTS: "pandas psycopg2-binary openpyxl python-dotenv requests soda-core-postgres"
-      # Variables pour les scripts (dans Docker, DB_HOST = nom du service, pas localhost)
-      DB_HOST: postgres
-      DB_PORT: "5432"
-      DB_NAME: sport_data
-      DB_USER: p12_user
-      DB_PASSWORD: p12_password
-      RH_FILE: /opt/airflow/data/donnees_RH.xlsx
-      SPORTS_FILE: /opt/airflow/data/donnees_sports.xlsx
-      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
-      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    command: webserver
     ports:
       - "8080:8080"
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./scripts:/opt/airflow/scripts
-      - ./data:/opt/airflow/data
-      - ./soda:/opt/airflow/soda
     depends_on:
       postgres:
         condition: service_healthy
-    command: bash -c "(airflow db init || true) && (airflow users create --username admin --password admin --firstname Admin --lastname Admin --role Admin --email admin@p12.com || true) && airflow webserver --port 8080 & airflow scheduler"
-    networks:
-      - p12_network
+      airflow-init:
+        condition: service_completed_successfully
+
+  # 3. Scheduler Service
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: p12_airflow_scheduler
+    restart: unless-stopped
+    command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
 
   pgadmin:
     image: dpage/pgadmin4:latest
@@ -63,11 +91,12 @@ services:
     restart: unless-stopped
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@p12.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
     ports:
       - "5050:80"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     networks:
       - p12_network
 

@@ -202,13 +202,19 @@ SELECT
 -- Vue 6 : Activités par mois (pour courbe mensuelle Power BI)
 CREATE OR REPLACE VIEW analytics.activites_par_mois AS
 SELECT
-    TO_CHAR(date_debut, 'YYYY-MM') AS mois,
-    EXTRACT(YEAR FROM date_debut) AS annee,
-    EXTRACT(MONTH FROM date_debut) AS num_mois,
-    type_sport,
+    TO_CHAR(a.date_debut, 'YYYY-MM') AS mois,
+    EXTRACT(YEAR FROM a.date_debut) AS annee,
+    EXTRACT(MONTH FROM a.date_debut) AS num_mois,
+    a.type_sport,
+    s.bu,
     COUNT(*) AS nb_activites,
-    COUNT(DISTINCT id_salarie) AS nb_salaries_actifs,
-    ROUND(AVG(distance_m), 0) AS distance_moyenne_m
-FROM raw.activites_sportives
-GROUP BY TO_CHAR(date_debut, 'YYYY-MM'), EXTRACT(YEAR FROM date_debut), EXTRACT(MONTH FROM date_debut), type_sport
+    COUNT(DISTINCT a.id_salarie) AS nb_salaries_actifs,
+    ROUND(AVG(a.distance_m), 0) AS distance_moyenne_m
+FROM raw.activites_sportives a
+JOIN raw.salaries s ON a.id_salarie = s.id_salarie
+GROUP BY TO_CHAR(a.date_debut, 'YYYY-MM'), EXTRACT(YEAR FROM a.date_debut), EXTRACT(MONTH FROM a.date_debut), a.type_sport, s.bu
 ORDER BY mois;
+
+-- Vue 7 : Dimension BU (pour analyse par unité métier)
+CREATE OR REPLACE VIEW analytics.dim_bu AS
+SELECT DISTINCT bu FROM raw.salaries WHERE bu IS NOT NULL;
