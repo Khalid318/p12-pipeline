@@ -1,7 +1,10 @@
 """
 P12 - Sport Data Solution
 Génération de données sportives simulées (type Strava).
-~4000 activités sur 12 mois dans raw.activites_sportives.
+
+Deux modes :
+- BOOTSTRAP (première exécution) : ~4700 activités historiques avec slack_sent = TRUE
+- INCREMENTAL (exécutions suivantes) : 1-3 nouvelles activités avec slack_sent = FALSE
 """
 
 import os
@@ -13,8 +16,6 @@ from dotenv import load_dotenv
 import sys
 
 load_dotenv()
-
-random.seed(42)
 
 DATE_FIN = datetime(2026, 3, 1)
 DATE_DEBUT = datetime(2025, 3, 1)
@@ -181,6 +182,7 @@ def determine_profil(sport_declare, moyen_deplacement):
 
 
 def generer_tout(cur):
+    """Génère ~4700 activités historiques sur 12 mois."""
     cur.execute("""
         SELECT s.id_salarie, s.moyen_deplacement, sd.sport
         FROM raw.salaries s
@@ -218,6 +220,29 @@ def generer_tout(cur):
     return activites
 
 
+def generer_incrementales(cur):
+    """Génère 1-3 nouvelles activités (simulation API Strava)."""
+    cur.execute("""
+        SELECT s.id_salarie, s.moyen_deplacement, sd.sport
+        FROM raw.salaries s
+        LEFT JOIN raw.sports_declares sd ON s.id_salarie = sd.id_salarie
+        WHERE sd.sport IS NOT NULL
+        ORDER BY RANDOM()
+        LIMIT 3
+    """)
+    salaries = cur.fetchall()
+    nouvelles = []
+
+    for id_sal, moyen_dep, sport_decl in salaries:
+        sports = list(SPORT_MAPPING.get(sport_decl, ["Course à pied", "Marche"]))
+        sport = random.choice(sports)
+        activite = generer_activite(id_sal, sport, datetime.now())
+        nouvelles.append(activite)
+
+    return nouvelles
+
+
+# --- MAIN ---
 conn = None
 cur = None
 
@@ -232,32 +257,81 @@ try:
     cur = conn.cursor()
     print("Connexion OK")
 
-    print("Generation des activites...")
-    activites = generer_tout(cur)
-    print(f"{len(activites)} activites generees")
+    # Déterminer le mode : bootstrap ou incrémental
+    cur.execute("SELECT COUNT(*) FROM raw.activites_sportives")
+    count = cur.fetchone()[0]
 
-    cur.execute("TRUNCATE TABLE raw.activites_sportives RESTART IDENTITY;")
+    if count == 0:
+        # ============================================
+        # MODE BOOTSTRAP : première exécution
+        # Génère l'historique complet, slack_sent = TRUE
+        # ============================================
+        print("MODE BOOTSTRAP : generation de l'historique...")
+        random.seed(42)  # Reproductibilité pour l'historique
 
-    query = """
-        INSERT INTO raw.activites_sportives
-            (id_salarie, date_debut, type_sport, distance_m, date_fin, commentaire)
-        VALUES %s
-    """
+        activites = generer_tout(cur)
+        print(f"{len(activites)} activites historiques generees")
 
-    extras.execute_values(cur, query, activites, page_size=1000)
-    conn.commit()
-    print(f"{len(activites)} activites inserees dans raw.activites_sportives")
+        cur.execute("TRUNCATE TABLE raw.activites_sportives RESTART IDENTITY;")
+
+        query = """
+            INSERT INTO raw.activites_sportives
+                (id_salarie, date_debut, type_sport, distance_m, date_fin, commentaire, slack_sent)
+            VALUES %s
+        """
+        # Ajouter slack_sent = True à chaque tuple
+        activites_bootstrap = [a + (True,) for a in activites]
+
+        extras.execute_values(cur, query, activites_bootstrap, page_size=1000)
+        conn.commit()
+        print(f"{len(activites)} activites inserees (slack_sent = TRUE, pas de notification)")
+
+    else:
+        # ============================================
+        # MODE INCREMENTAL : exécutions suivantes
+        # Ajoute 1-3 nouvelles activités, slack_sent = FALSE
+        # ============================================
+        print(f"MODE INCREMENTAL : {count} activites existantes, ajout de nouvelles...")
+        # Pas de seed : on veut des activités différentes à chaque run
+
+        nouvelles = generer_incrementales(cur)
+
+        query = """
+            INSERT INTO raw.activites_sportives
+                (id_salarie, date_debut, type_sport, distance_m, date_fin, commentaire)
+            VALUES %s
+        """
+        extras.execute_values(cur, query, nouvelles)
+        conn.commit()
+        print(f"{len(nouvelles)} nouvelles activites inserees (slack_sent = FALSE)")
+
+    # --- Stats communes ---
+    cur.execute("SELECT COUNT(*) FROM raw.activites_sportives")
+    total = cur.fetchone()[0]
 
     cur.execute("SELECT COUNT(DISTINCT id_salarie) FROM raw.activites_sportives")
-    print(f"Salaries actifs : {cur.fetchone()[0]}")
+    actifs = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT
+            COUNT(*) FILTER (WHERE slack_sent = TRUE) AS notifiees,
+            COUNT(*) FILTER (WHERE slack_sent = FALSE) AS en_attente
+        FROM raw.activites_sportives
+    """)
+    notifiees, en_attente = cur.fetchone()
+
+    print(f"\n  Total activites     : {total}")
+    print(f"  Salaries actifs     : {actifs}")
+    print(f"  Deja notifiees      : {notifiees}")
+    print(f"  En attente Slack    : {en_attente}")
 
     cur.execute("""
         SELECT type_sport, COUNT(*) FROM raw.activites_sportives
         GROUP BY type_sport ORDER BY COUNT(*) DESC LIMIT 5
     """)
-    print("Top 5 sports :")
-    for sport, count in cur.fetchall():
-        print(f"  {sport}: {count}")
+    print("\n  Top 5 sports :")
+    for sport, cnt in cur.fetchall():
+        print(f"    {sport}: {cnt}")
 
     cur.execute("""
         SELECT COUNT(*) FROM (
@@ -265,7 +339,7 @@ try:
             GROUP BY id_salarie HAVING COUNT(*) >= 15
         ) sub
     """)
-    print(f"Eligibles jours bien-etre (>= 15 activites) : {cur.fetchone()[0]}")
+    print(f"\n  Eligibles jours bien-etre (>= 15 activites) : {cur.fetchone()[0]}")
 
 except Exception as e:
     print(f"ERREUR : {e}")

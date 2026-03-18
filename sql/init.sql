@@ -218,3 +218,23 @@ ORDER BY mois;
 -- Vue 7 : Dimension BU (pour analyse par unité métier)
 CREATE OR REPLACE VIEW analytics.dim_bu AS
 SELECT DISTINCT bu FROM raw.salaries WHERE bu IS NOT NULL;
+
+-- Vue 8 : Dimeension id_salarie (pour analyse détaillée par salarié)
+CREATE OR REPLACE VIEW analytics.detail_salarie AS
+SELECT
+    p.id_salarie,
+    p.nom,
+    p.prenom,
+    p.bu,
+    p.salaire_brut,
+    p.moyen_deplacement,
+    p.distance_km,
+    p.statut_prime,
+    p.montant_prime,
+    j.nb_activites,
+    j.statut_jours,
+    j.nb_jours_accordes,
+    sd.sport
+FROM analytics.prime_sportive p
+JOIN analytics.jours_bien_etre j ON p.id_salarie = j.id_salarie
+LEFT JOIN raw.sports_declares sd ON p.id_salarie = sd.id_salarie;
