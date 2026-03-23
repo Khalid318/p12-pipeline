@@ -215,11 +215,9 @@ JOIN raw.salaries s ON a.id_salarie = s.id_salarie
 GROUP BY TO_CHAR(a.date_debut, 'YYYY-MM'), EXTRACT(YEAR FROM a.date_debut), EXTRACT(MONTH FROM a.date_debut), a.type_sport, s.bu
 ORDER BY mois;
 
--- Vue 7 : Dimension BU (pour analyse par unité métier)
-CREATE OR REPLACE VIEW analytics.dim_bu AS
-SELECT DISTINCT bu FROM raw.salaries WHERE bu IS NOT NULL;
 
--- Vue 8 : Dimeension id_salarie (pour analyse détaillée par salarié)
+
+-- Vue 8 : Dimension id_salarie (pour analyse détaillée par salarié)
 CREATE OR REPLACE VIEW analytics.detail_salarie AS
 SELECT
     p.id_salarie,

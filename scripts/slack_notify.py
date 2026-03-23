@@ -109,19 +109,6 @@ try:
     else:
         print("MODE SLACK : envoi réel des messages")
 
-    # Récupérer les activités non encore notifiées
-    # On utilise un flag slack_sent pour ne pas renvoyer les mêmes messages
-    # D'abord, vérifier si la colonne existe (ajoutée dynamiquement)
-    cur.execute("""
-        SELECT column_name FROM information_schema.columns
-        WHERE table_schema = 'raw' AND table_name = 'activites_sportives'
-        AND column_name = 'slack_sent'
-    """)
-    if not cur.fetchone():
-        # Ajouter la colonne si elle n'existe pas
-        cur.execute("ALTER TABLE raw.activites_sportives ADD COLUMN slack_sent BOOLEAN DEFAULT FALSE")
-        conn.commit()
-        print("Colonne slack_sent ajoutee")
 
     # Récupérer les 20 dernières activités non notifiées
     # (limite à 20 pour ne pas spammer Slack en mode réel)

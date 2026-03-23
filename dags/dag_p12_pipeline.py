@@ -1,6 +1,6 @@
 """
 P12 - Sport Data Solution
-DAG Airflow : pipeline ETL complet.
+DAG Airflow : Pipeline ELT - Avantages sportifs.
 """
 
 from datetime import datetime, timedelta
@@ -39,7 +39,7 @@ default_args = {
     "depends_on_past": False,
     "email_on_failure": False,
     "retries": 1,
-    "retry_delay": timedelta(minutes=2),
+    "retry_delay": timedelta(seconds=5),
     "on_failure_callback": on_failure_slack,
 }
 
