@@ -37,7 +37,7 @@ Le premier run génère l'historique complet (~4700 activités). Les runs suivan
 
 - **Airflow** pour l'orchestration (6 tâches, retry automatique, alerte Slack si échec)
 - **PostgreSQL** pour le stockage (schéma raw + analytics avec 8 vues)
-- **Docker Compose** pour l'infra (5 containers : postgres, airflow-init, webserver, scheduler, pgadmin)
+- **Docker Compose** pour l'infra (5 containers : postgres, airflow-init, webserver, scheduler)
 - **SODA Core** pour les tests de qualité (15 checks YAML)
 - **Slack Webhooks** pour les notifications
 - **Power BI** en DirectQuery pour le dashboard
@@ -66,9 +66,7 @@ docker-compose up -d
 
 Attendre 3-5 min que tout s'initialise. Vérifier avec `docker ps` (4 containers actifs). 
 
-Airflow sur `localhost:8080` (admin/admin),
-
-pgAdmin sur `localhost:5050`.
+Airflow sur `localhost:8080` (admin/admin).
 
 ### Lancer le pipeline
 
@@ -97,7 +95,7 @@ Runs suivants = incrémental (1-3 nouvelles activités, notification Slack uniqu
 │   └── checks.yml               # 15 checks
 ├── data/                        # Fichiers Excel 
 └── notebooks/
-    └── eda.ipynb                # Analyse exploratoire
+    └── p12_eda.ipynb                # Analyse exploratoire
 ```
 
 ## Base de données
@@ -121,7 +119,7 @@ Runs suivants = incrémental (1-3 nouvelles activités, notification Slack uniqu
 | detail_salarie | Vue consolidée (prime + jours + sport) utilisée par Power BI |
 | anomalies_transport | Salariés dont la distance dépasse les seuils |
 | controle_qualite | Données manquantes ou incohérentes |
-| kpi_global | Chiffres clés en une ligne (pour Airflow/pgAdmin) |
+| kpi_global | Chiffres clés en une ligne (pour Airflow/Postgresql) |
 | activites_par_mois | Agrégation mensuelle par sport et BU |
 | dim_bu | Dimension BU pour le star schema Power BI |
 

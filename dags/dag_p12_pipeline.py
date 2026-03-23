@@ -72,6 +72,7 @@ def verify_data(**kwargs):
         "analytics.prime_sportive",
         "analytics.jours_bien_etre",
         "analytics.kpi_global",
+        "analytics.detail_salarie",
     ]
 
     for view in views:
