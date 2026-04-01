@@ -81,7 +81,7 @@ Runs suivants = incrémental (1-3 nouvelles activités, notification Slack uniqu
 ├── docker-compose.yml
 ├── .env.example
 ├── sql/
-│   └── init.sql                 # 5 tables raw + 8 vues analytics
+│   └── init.sql                 # 5 tables raw + 7 vues analytics
 ├── dags/
 │   └── dag_p12_pipeline.py      # DAG Airflow (6 tâches)
 ├── scripts/
