@@ -243,113 +243,108 @@ def generer_incrementales(cur):
 
 
 # --- MAIN ---
-conn = None
-cur = None
+def main():
+    conn = None
+    cur = None
 
-try:
-    conn = psycopg2.connect(
-        host=os.getenv("DB_HOST"),
-        port=os.getenv("DB_PORT"),
-        database=os.getenv("DB_NAME"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD")
-    )
-    cur = conn.cursor()
-    print("Connexion OK")
+    try:
+        conn = psycopg2.connect(
+            host=os.getenv("DB_HOST"),
+            port=os.getenv("DB_PORT"),
+            database=os.getenv("DB_NAME"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD")
+        )
+        cur = conn.cursor()
+        print("Connexion OK")
 
-    # Déterminer le mode : bootstrap ou incrémental
-    cur.execute("SELECT COUNT(*) FROM raw.activites_sportives")
-    count = cur.fetchone()[0]
+        # Déterminer le mode : bootstrap ou incrémental
+        cur.execute("SELECT COUNT(*) FROM raw.activites_sportives")
+        count = cur.fetchone()[0]
 
-    if count == 0:
-        # ============================================
-        # MODE BOOTSTRAP : première exécution
-        # Génère l'historique complet, slack_sent = TRUE
-        # ============================================
-        print("MODE BOOTSTRAP : generation de l'historique...")
-        random.seed(42)  # Reproductibilité pour l'historique
+        if count == 0:
+            print("MODE BOOTSTRAP : generation de l'historique...")
+            random.seed(42)
 
-        activites = generer_tout(cur)
-        print(f"{len(activites)} activites historiques generees")
+            activites = generer_tout(cur)
+            print(f"{len(activites)} activites historiques generees")
 
-        cur.execute("TRUNCATE TABLE raw.activites_sportives RESTART IDENTITY;")
+            cur.execute("TRUNCATE TABLE raw.activites_sportives RESTART IDENTITY;")
 
-        query = """
-            INSERT INTO raw.activites_sportives
-                (id_salarie, date_debut, type_sport, distance_m, date_fin, commentaire, slack_sent)
-            VALUES %s
-        """
-        # Ajouter slack_sent = True à chaque tuple
-        activites_bootstrap = [a + (True,) for a in activites]
+            query = """
+                INSERT INTO raw.activites_sportives
+                    (id_salarie, date_debut, type_sport, distance_m, date_fin, commentaire, slack_sent)
+                VALUES %s
+            """
+            activites_bootstrap = [a + (True,) for a in activites]
 
-        extras.execute_values(cur, query, activites_bootstrap, page_size=1000)
-        conn.commit()
-        print(f"{len(activites)} activites inserees (slack_sent = TRUE, pas de notification)")
+            extras.execute_values(cur, query, activites_bootstrap, page_size=1000)
+            conn.commit()
+            print(f"{len(activites)} activites inserees (slack_sent = TRUE, pas de notification)")
 
-    else:
-        # ============================================
-        # MODE INCREMENTAL : exécutions suivantes
-        # Ajoute 1-3 nouvelles activités, slack_sent = FALSE
-        # ============================================
-        print(f"MODE INCREMENTAL : {count} activites existantes, ajout de nouvelles...")
-        # Pas de seed : on veut des activités différentes à chaque run
+        else:
+            print(f"MODE INCREMENTAL : {count} activites existantes, ajout de nouvelles...")
 
-        nouvelles = generer_incrementales(cur)
+            nouvelles = generer_incrementales(cur)
 
-        query = """
-            INSERT INTO raw.activites_sportives
-                (id_salarie, date_debut, type_sport, distance_m, date_fin, commentaire)
-            VALUES %s
-        """
-        extras.execute_values(cur, query, nouvelles)
-        conn.commit()
-        print(f"{len(nouvelles)} nouvelles activites inserees (slack_sent = FALSE)")
+            query = """
+                INSERT INTO raw.activites_sportives
+                    (id_salarie, date_debut, type_sport, distance_m, date_fin, commentaire)
+                VALUES %s
+            """
+            extras.execute_values(cur, query, nouvelles)
+            conn.commit()
+            print(f"{len(nouvelles)} nouvelles activites inserees (slack_sent = FALSE)")
 
-    # --- Stats communes ---
-    cur.execute("SELECT COUNT(*) FROM raw.activites_sportives")
-    total = cur.fetchone()[0]
+        # --- Stats communes ---
+        cur.execute("SELECT COUNT(*) FROM raw.activites_sportives")
+        total = cur.fetchone()[0]
 
-    cur.execute("SELECT COUNT(DISTINCT id_salarie) FROM raw.activites_sportives")
-    actifs = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(DISTINCT id_salarie) FROM raw.activites_sportives")
+        actifs = cur.fetchone()[0]
 
-    cur.execute("""
-        SELECT
-            COUNT(*) FILTER (WHERE slack_sent = TRUE) AS notifiees,
-            COUNT(*) FILTER (WHERE slack_sent = FALSE) AS en_attente
-        FROM raw.activites_sportives
-    """)
-    notifiees, en_attente = cur.fetchone()
+        cur.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE slack_sent = TRUE) AS notifiees,
+                COUNT(*) FILTER (WHERE slack_sent = FALSE) AS en_attente
+            FROM raw.activites_sportives
+        """)
+        notifiees, en_attente = cur.fetchone()
 
-    print(f"\n  Total activites     : {total}")
-    print(f"  Salaries actifs     : {actifs}")
-    print(f"  Deja notifiees      : {notifiees}")
-    print(f"  En attente Slack    : {en_attente}")
+        print(f"\n  Total activites     : {total}")
+        print(f"  Salaries actifs     : {actifs}")
+        print(f"  Deja notifiees      : {notifiees}")
+        print(f"  En attente Slack    : {en_attente}")
 
-    cur.execute("""
-        SELECT type_sport, COUNT(*) FROM raw.activites_sportives
-        GROUP BY type_sport ORDER BY COUNT(*) DESC LIMIT 5
-    """)
-    print("\n  Top 5 sports :")
-    for sport, cnt in cur.fetchall():
-        print(f"    {sport}: {cnt}")
+        cur.execute("""
+            SELECT type_sport, COUNT(*) FROM raw.activites_sportives
+            GROUP BY type_sport ORDER BY COUNT(*) DESC LIMIT 5
+        """)
+        print("\n  Top 5 sports :")
+        for sport, cnt in cur.fetchall():
+            print(f"    {sport}: {cnt}")
 
-    cur.execute("""
-        SELECT COUNT(*) FROM (
-            SELECT id_salarie FROM raw.activites_sportives
-            GROUP BY id_salarie HAVING COUNT(*) >= 15
-        ) sub
-    """)
-    print(f"\n  Eligibles jours bien-etre (>= 15 activites) : {cur.fetchone()[0]}")
+        cur.execute("""
+            SELECT COUNT(*) FROM (
+                SELECT id_salarie FROM raw.activites_sportives
+                GROUP BY id_salarie HAVING COUNT(*) >= 15
+            ) sub
+        """)
+        print(f"\n  Eligibles jours bien-etre (>= 15 activites) : {cur.fetchone()[0]}")
 
-except Exception as e:
-    print(f"ERREUR : {e}")
-    if conn:
-        conn.rollback()
-    sys.exit(1)
+    except Exception as e:
+        print(f"ERREUR : {e}")
+        if conn:
+            conn.rollback()
+        sys.exit(1)
 
-finally:
-    if cur:
-        cur.close()
-    if conn:
-        conn.close()
-    print("Connexion fermee")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+        print("Connexion fermee")
+
+
+if __name__ == "__main__":
+    main()

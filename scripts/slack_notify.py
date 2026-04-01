@@ -88,97 +88,102 @@ def send_slack(webhook_url, message):
 
 
 # --- MAIN ---
-conn = None
-cur = None
+def main():
+    conn = None
+    cur = None
 
-try:
-    conn = psycopg2.connect(
-        host=os.getenv("DB_HOST"),
-        port=os.getenv("DB_PORT"),
-        database=os.getenv("DB_NAME"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-    )
-    cur = conn.cursor()
-    print("Connexion OK")
-
-    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
-    mock_mode = not webhook_url
-    if mock_mode:
-        print("MODE MOCK : pas de webhook Slack, messages en console")
-    else:
-        print("MODE SLACK : envoi réel des messages")
-
-
-    # Récupérer les 20 dernières activités non notifiées
-    # (limite à 20 pour ne pas spammer Slack en mode réel)
-    cur.execute("""
-        SELECT
-            a.id,
-            s.prenom,
-            s.nom,
-            a.type_sport,
-            a.distance_m,
-            EXTRACT(EPOCH FROM (a.date_fin - a.date_debut))::INTEGER AS duree_s,
-            a.commentaire
-        FROM raw.activites_sportives a
-        JOIN raw.salaries s ON a.id_salarie = s.id_salarie
-        WHERE a.slack_sent = FALSE
-        ORDER BY a.date_debut DESC
-        LIMIT 20
-    """)
-    activites = cur.fetchall()
-    print(f"{len(activites)} activites a notifier")
-
-    sent_ids = []
-    for act_id, prenom, nom, sport, distance, duree, commentaire in activites:
-        message = format_message(prenom, nom, sport, distance, duree, commentaire)
-
-        if mock_mode:
-            print(f"  [SLACK] {message}")
-        else:
-            success = send_slack(webhook_url, message)
-            if success:
-                print(f"  [OK] Message envoyé pour {prenom} {nom}")
-            else:
-                print(f"  [ERREUR] Échec envoi pour {prenom} {nom}")
-                continue
-
-        sent_ids.append((act_id,))
-
-    # Marquer les activités comme notifiées
-    if sent_ids:
-        from psycopg2 import extras
-        extras.execute_values(
-            cur,
-            "UPDATE raw.activites_sportives SET slack_sent = TRUE WHERE id IN (VALUES %s)",
-            sent_ids,
+    try:
+        conn = psycopg2.connect(
+            host=os.getenv("DB_HOST"),
+            port=os.getenv("DB_PORT"),
+            database=os.getenv("DB_NAME"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD"),
         )
-        conn.commit()
-        print(f"{len(sent_ids)} activites marquees comme notifiees")
+        cur = conn.cursor()
+        print("Connexion OK")
 
-    # Stats
-    cur.execute("""
-        SELECT
-            COUNT(*) FILTER (WHERE slack_sent = TRUE) AS notifiees,
-            COUNT(*) FILTER (WHERE slack_sent = FALSE) AS en_attente,
-            COUNT(*) AS total
-        FROM raw.activites_sportives
-    """)
-    row = cur.fetchone()
-    print(f"\n  Notifiees   : {row[0]}")
-    print(f"  En attente  : {row[1]}")
-    print(f"  Total       : {row[2]}")
+        webhook_url = os.getenv("SLACK_WEBHOOK_URL")
+        mock_mode = not webhook_url
+        if mock_mode:
+            print("MODE MOCK : pas de webhook Slack, messages en console")
+        else:
+            print("MODE SLACK : envoi réel des messages")
 
-except Exception as e:
-    print(f"ERREUR : {e}")
-    if conn:
-        conn.rollback()
-    sys.exit(1)
 
-finally:
-    if cur:
-        cur.close()
-    if conn:
-        conn.close()
-    print("Connexion fermee")
+        # Récupérer les 20 dernières activités non notifiées
+        # (limite à 20 pour ne pas spammer Slack en mode réel)
+        cur.execute("""
+            SELECT
+                a.id,
+                s.prenom,
+                s.nom,
+                a.type_sport,
+                a.distance_m,
+                EXTRACT(EPOCH FROM (a.date_fin - a.date_debut))::INTEGER AS duree_s,
+                a.commentaire
+            FROM raw.activites_sportives a
+            JOIN raw.salaries s ON a.id_salarie = s.id_salarie
+            WHERE a.slack_sent = FALSE
+            ORDER BY a.date_debut DESC
+            LIMIT 20
+        """)
+        activites = cur.fetchall()
+        print(f"{len(activites)} activites a notifier")
+
+        sent_ids = []
+        for act_id, prenom, nom, sport, distance, duree, commentaire in activites:
+            message = format_message(prenom, nom, sport, distance, duree, commentaire)
+
+            if mock_mode:
+                print(f"  [SLACK] {message}")
+            else:
+                success = send_slack(webhook_url, message)
+                if success:
+                    print(f"  [OK] Message envoyé pour {prenom} {nom}")
+                else:
+                    print(f"  [ERREUR] Échec envoi pour {prenom} {nom}")
+                    continue
+
+            sent_ids.append((act_id,))
+
+        # Marquer les activités comme notifiées
+        if sent_ids:
+            from psycopg2 import extras
+            extras.execute_values(
+                cur,
+                "UPDATE raw.activites_sportives SET slack_sent = TRUE WHERE id IN (VALUES %s)",
+                sent_ids,
+            )
+            conn.commit()
+            print(f"{len(sent_ids)} activites marquees comme notifiees")
+
+        # Stats
+        cur.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE slack_sent = TRUE) AS notifiees,
+                COUNT(*) FILTER (WHERE slack_sent = FALSE) AS en_attente,
+                COUNT(*) AS total
+            FROM raw.activites_sportives
+        """)
+        row = cur.fetchone()
+        print(f"\n  Notifiees   : {row[0]}")
+        print(f"  En attente  : {row[1]}")
+        print(f"  Total       : {row[2]}")
+
+    except Exception as e:
+        print(f"ERREUR : {e}")
+        if conn:
+            conn.rollback()
+        sys.exit(1)
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+        print("Connexion fermee")
+
+
+if __name__ == "__main__":
+    main()
