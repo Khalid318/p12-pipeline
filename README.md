@@ -36,7 +36,7 @@ Le premier run génère l'historique complet (~4700 activités). Les runs suivan
 ## Stack
 
 - **Airflow** pour l'orchestration (6 tâches, retry automatique, alerte Slack si échec)
-- **PostgreSQL** pour le stockage (schéma raw + analytics avec 8 vues)
+- **PostgreSQL** pour le stockage (schéma raw + analytics avec 7 vues)
 - **Docker Compose** pour l'infra (5 containers : postgres, airflow-init, webserver, scheduler)
 - **SODA Core** pour les tests de qualité (15 checks YAML)
 - **Slack Webhooks** pour les notifications
@@ -156,7 +156,7 @@ Le flag `slack_sent` en base empêche d'envoyer deux fois le même message.
 
 **Overview** : 4 KPI (salariés, coût des primes, jours accordés, activités), coût par département, répartition éligibles/non-éligibles, répartition par mode de transport.
 
-Filtres par BU et par sport sur tous les visuels grâce au star schema (`dim_bu` + `detail_salarie`).
+Filtres par BU et par sport via une vue dénormalisée (`detail_salarie`) qui consolide primes, jours et sport en une seule table. La page activité utilise `activites_par_mois` avec son propre filtre BU.
 
 ## RGPD
 
