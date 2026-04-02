@@ -121,7 +121,7 @@ Runs suivants = incrémental (1-3 nouvelles activités, notification Slack uniqu
 | controle_qualite | Données manquantes ou incohérentes |
 | kpi_global | Chiffres clés en une ligne (pour Airflow/Postgresql) |
 | activites_par_mois | Agrégation mensuelle par sport et BU |
-| dim_bu | Dimension BU pour le star schema Power BI |
+
 
 Les paramètres métier sont modifiables directement en base :
 ```sql
