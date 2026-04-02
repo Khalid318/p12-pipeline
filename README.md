@@ -94,8 +94,12 @@ Runs suivants = incrémental (1-3 nouvelles activités, notification Slack uniqu
 │   ├── soda_config.yml
 │   └── checks.yml               # 15 checks
 ├── data/                        # Fichiers Excel 
-└── notebooks/
-    └── p12_eda.ipynb                # Analyse exploratoire
+├── notebooks/
+│   └── p12_eda.ipynb                # Analyse exploratoire
+└── tests/
+    ├── test_google_maps.py          # Tests extraction code postal
+    ├── test_slack.py                # Tests messages Slack
+    └── test_strava.py               # Tests génération activités
 ```
 
 ## Base de données
@@ -122,14 +126,15 @@ Runs suivants = incrémental (1-3 nouvelles activités, notification Slack uniqu
 | kpi_global | Chiffres clés en une ligne (pour Airflow/Postgresql) |
 | activites_par_mois | Agrégation mensuelle par sport et BU |
 
-
 Les paramètres métier sont modifiables directement en base :
 ```sql
 UPDATE raw.parametres SET valeur = '0.07' WHERE cle = 'prime_taux';
 -- Rafraîchir Power BI → les montants changent, rien d'autre à faire
 ```
 
-## Tests de qualité
+## Tests
+
+### Tests de qualité des données (SODA Core)
 
 15 checks SODA sur les données brutes (doublons, valeurs nulles, distances négatives, salaires réalistes...). Si un check échoue le pipeline s'arrête et une alerte Slack part.
 
@@ -139,6 +144,22 @@ UPDATE raw.parametres SET valeur = '0.07' WHERE cle = 'prime_taux';
 [PASS] salaire minimum realiste
 [FAIL] distances jamais negatives    ← pipeline bloqué, alerte envoyée
 ```
+
+### Tests unitaires (pytest)
+
+22 tests couvrant les fonctions métier critiques :
+
+```bash
+python -m pytest tests/ -v
+```
+
+| Fichier | Fonctions testées | Tests |
+|---------|-------------------|-------|
+| test_google_maps.py | extract_code_postal() | 8 |
+| test_slack.py | format_message() | 6 |
+| test_strava.py | generer_activite(), determine_profil() | 8 |
+
+Les scripts utilisent un garde `if __name__ == "__main__"` pour séparer la logique métier (importable et testable) de l'exécution pipeline.
 
 ## Notifications Slack
 
